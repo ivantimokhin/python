@@ -1,0 +1,101 @@
+# ==============================================================================
+# PYTHON CORE
+# ==============================================================================
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# ==============================================================================
+# VIRTUAL ENVIRONMENTS
+# ==============================================================================
+# Standard Python virtual environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Poetry, Pipenv, Hatch, PDM, and Pixi project-specific environments
+.pdm-python
+.pdm-build/
+.pixi/
+
+# ==============================================================================
+# TESTING AND COVERAGE
+# ==============================================================================
+.cache/
+.pytest_cache/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+htmlcov/
+.hypothesis/
+.ruff_cache/
+
+# ==============================================================================
+# JUPYTER NOTEBOOKS
+# ==============================================================================
+.ipynb_checkpoints
+*/.ipynb_checkpoints/*
+
+# ==============================================================================
+# CONFIGURATIONS, ENVIRONMENT VARIABLES, AND SECRETS
+# ==============================================================================
+# Local configuration files containing credentials
+.env
+.env.*
+!.env.example
+*.local
+podman/
+
+# ==============================================================================
+# IDE AND SYSTEM FILES (Optional but recommended)
+# ==============================================================================
+# JetBrains / PyCharm
+.idea/
+
+# Visual Studio Code
+.vscode/
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+
+# Operating System files
+.DS_Store
+Thumbs.db
+
+
+*.wav
+*.spec
+*.reapeaks
