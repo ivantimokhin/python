@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 
+import os
 import re
 import subprocess
 import tkinter as tk
-from tkinter import ttk
+from tkinter import filedialog, ttk
 
 PROCESS_NAMES = ("jackd", "reaper", "klick", "jack_capture", "yabridge-host.exe.so")
 MIN_PRIORITY = 0
@@ -29,6 +30,14 @@ def _command_line_for_pid(pid: int):
 
 
 def _yabridge_display_name_from_cmdline(cmdline: str):
+    path_match = re.search(r"(?P<path>/.*?)(?=\s+/run/user\b|\s+\d+\s*$|$)", cmdline)
+    if path_match:
+        plugin_path = path_match.group("path").strip()
+        if plugin_path:
+            plugin_name = os.path.basename(plugin_path)
+            if plugin_name:
+                return plugin_name
+
     for token in reversed(cmdline.split()):
         if token.startswith("yabridge-"):
             return token.removeprefix("yabridge-").upper()
@@ -179,39 +188,72 @@ class RtprioWindow:
     def __init__(self, root):
         self.root = root
         self.root.title("RT Priority Controls")
-        self.root.geometry("480x220")
+        self.root.geometry("540x220")
         self.root.minsize(420, 600)
 
         self.status_var = tk.StringVar(value="Ready")
         self.process_vars = {}
 
-        main = ttk.Frame(root, padding=12)
-        main.pack(fill=tk.BOTH, expand=True)
+        style = ttk.Style(root)
+        style.configure('.', font=('TkDefaultFont', 9))
+        style.configure('TButton', font=('TkDefaultFont', 9))
+        style.configure('TLabel', font=('TkDefaultFont', 9))
+        style.configure('TCombobox', font=('TkDefaultFont', 9))
 
-        process_entries = []
+        self.main = ttk.Frame(root, padding=12)
+        self.main.pack(fill=tk.BOTH, expand=True)
+
+        toolbar = ttk.Frame(self.main)
+        toolbar.pack(fill=tk.X, pady=(0, 8))
+
+        self.refresh_button = ttk.Button(toolbar, text="Refresh", command=self.refresh_processes)
+        self.refresh_button.pack(side=tk.LEFT)
+
+        self.save_button = ttk.Button(toolbar, text="Save", command=self.save_data)
+        self.save_button.pack(side=tk.LEFT, padx=(8, 0))
+
+        self.processes_frame = ttk.Frame(self.main)
+        self.processes_frame.pack(fill=tk.BOTH, expand=True)
+
+        self.status_label = ttk.Label(self.main, textvariable=self.status_var, foreground="#1f5fbf")
+        self.status_label.pack(anchor="w", pady=(8, 0))
+
+        self.refresh_processes()
+
+    def collect_process_entries(self):
+        entries = []
         for process_name in PROCESS_NAMES:
             if process_name == "yabridge-host.exe.so":
+                yabridge_entries = []
                 for pid in find_pids(process_name):
                     cmdline = _command_line_for_pid(pid)
                     if not cmdline or not re.search(r"(?:^|\s)\d+\s*$", cmdline):
                         continue
-                    process_entries.append({
+                    yabridge_entries.append({
                         "key": f"yabridge:{pid}",
                         "process_name": process_name,
                         "pid": pid,
                         "display_name": _yabridge_display_name_from_cmdline(cmdline),
                     })
+                yabridge_entries.sort(key=lambda item: item["display_name"].lower())
+                entries.extend(yabridge_entries)
             else:
                 for pid in find_pids(process_name):
-                    process_entries.append({
+                    entries.append({
                         "key": f"{process_name}:{pid}",
                         "process_name": process_name,
                         "pid": pid,
                         "display_name": process_name.title(),
                     })
+        return entries
 
-        for entry in process_entries:
-            row = ttk.Frame(main)
+    def refresh_processes(self):
+        for child in self.processes_frame.winfo_children():
+            child.destroy()
+
+        self.process_vars = {}
+        for entry in self.collect_process_entries():
+            row = ttk.Frame(self.processes_frame)
             row.pack(fill=tk.X, pady=8)
 
             label_text = entry["display_name"]
@@ -221,7 +263,7 @@ class RtprioWindow:
             if pid_for_label is not None:
                 label_text = f"{label_text} ({pid_for_label})"
 
-            label = ttk.Label(row, text=label_text, width=22, anchor="w")
+            label = ttk.Label(row, text=label_text, width=35, anchor="w")
             label.pack(side=tk.LEFT)
 
             current_value = current_rtprio_for_pid(entry["pid"]) if entry["pid"] is not None else current_rtprio(entry["process_name"]) or MIN_PRIORITY
@@ -248,22 +290,6 @@ class RtprioWindow:
 
             self.root.after(0, _shorten)
 
-            def _attach_handler(s=slider, proc=entry["process_name"], var=value_var, pid=entry["pid"], display=entry["display_name"]):
-                def _handler(value):
-                    try:
-                        iv = int(round(float(value)))
-                    except (TypeError, ValueError):
-                        return
-                    var.set(iv)
-                    if pid is not None:
-                        self.apply_priority_for_pid(pid, proc, display, iv)
-                    else:
-                        self.apply_priority(proc, iv)
-
-                s.configure(command=_handler)
-
-            self.root.after(1, _attach_handler)
-
             value_label = ttk.Label(row, textvariable=value_var, width=4)
             value_label.pack(side=tk.RIGHT)
 
@@ -271,20 +297,46 @@ class RtprioWindow:
             policy_combo = ttk.Combobox(row, values=["-r", "-f"], textvariable=policy_var, width=4, state="readonly")
             policy_combo.pack(side=tk.RIGHT, padx=(0, 8))
 
-            def _apply_slider_value(value, pid=entry["pid"], proc=entry["process_name"], display=entry["display_name"], policy_var=policy_var):
+            def _apply_slider_value(value, row_pid=entry["pid"], row_proc=entry["process_name"], row_display=entry["display_name"], row_policy_var=policy_var, row_value_var=value_var):
                 try:
                     iv = int(round(float(value)))
                 except (TypeError, ValueError):
                     return
-                if pid is not None:
-                    self.apply_priority_for_pid(pid, proc, display, iv, policy_var.get())
+                row_value_var.set(iv)
+                if row_pid is not None:
+                    self.apply_priority_for_pid(row_pid, row_proc, row_display, iv, row_policy_var.get())
                 else:
-                    self.apply_priority(proc, iv, policy_var.get())
+                    self.apply_priority(row_proc, iv, row_policy_var.get())
+
+            def _apply_selected_policy(_event=None, row_pid=entry["pid"], row_proc=entry["process_name"], row_display=entry["display_name"], row_policy_var=policy_var, row_value_var=value_var):
+                _apply_slider_value(row_value_var.get(), row_pid=row_pid, row_proc=row_proc, row_display=row_display, row_policy_var=row_policy_var, row_value_var=row_value_var)
 
             slider.configure(command=_apply_slider_value)
+            policy_combo.bind("<<ComboboxSelected>>", _apply_selected_policy)
 
-        status = ttk.Label(main, textvariable=self.status_var, foreground="#1f5fbf")
-        status.pack(anchor="w", pady=(8, 0))
+    def save_data(self):
+        target = filedialog.asksaveasfilename(
+            title="Save process data",
+            defaultextension=".csv",
+            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
+        )
+        if not target:
+            return
+
+        lines = ["label,priority,policy"]
+        for entry in self.collect_process_entries():
+            pid = entry["pid"]
+            label = entry["display_name"]
+            priority = current_rtprio_for_pid(pid) if pid is not None else current_rtprio(entry["process_name"]) or MIN_PRIORITY
+            policy = "-r"
+            lines.append(f"{label},{priority},{policy}")
+
+        try:
+            with open(target, "w", encoding="utf-8") as fh:
+                fh.write("\n".join(lines) + "\n")
+            self.status_var.set(f"Saved to {target}")
+        except OSError as exc:
+            self.status_var.set(f"Save failed: {exc}")
 
     def apply_priority_for_pid(self, pid: int, process_name: str, display_name: str, value: int, policy: str = "-r"):
         ok, message = set_rtprio_for_pid(pid, value, policy)
