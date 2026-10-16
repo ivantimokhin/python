@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import csv
 import os
 import re
 import subprocess
@@ -49,23 +50,7 @@ def _yabridge_display_name_from_cmdline(cmdline: str):
     if match:
         return match.group(1).upper()
 
-    return "SYTRUS"
-
-
-def _yabridge_display_name(process_name: str):
-    if process_name != "yabridge-host.exe.so":
-        return process_name.title()
-
-    pid = find_pid(process_name)
-    if pid is None:
-        return "SYTRUS"
-
-    cmdline = _command_line_for_pid(pid)
-    if not cmdline:
-        return "SYTRUS"
-
-    return _yabridge_display_name_from_cmdline(cmdline)
-
+    return ""
 
 def find_pids(process_name: str):
     try:
@@ -118,6 +103,42 @@ def find_pid(process_name: str):
     return pids[0] if pids else None
 
 
+def _policy_from_chrt_output(output: str):
+    if not output:
+        return "-r"
+
+    match = re.search(r"current scheduling policy:\s*SCHED_?([A-Z_]+)", output, re.IGNORECASE)
+    if match:
+        policy_name = match.group(1).upper()
+        if policy_name in {"FIFO", "SCHED_FIFO"}:
+            return "-f"
+        if policy_name in {"RR", "SCHED_RR"}:
+            return "-r"
+
+    return "-r"
+
+
+def current_policy_for_pid(pid: int):
+    if pid is None:
+        return "-r"
+
+    try:
+        result = subprocess.run(
+            ["chrt", "-p", str(pid)],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except FileNotFoundError:
+        return "-r"
+
+    if result.returncode != 0:
+        return "-r"
+
+    output = (result.stdout or "") + (result.stderr or "")
+    return _policy_from_chrt_output(output)
+
+
 def current_rtprio_for_pid(pid: int):
     if pid is None:
         return None
@@ -135,8 +156,8 @@ def current_rtprio_for_pid(pid: int):
     if result.returncode != 0:
         return None
 
-    for line in result.stdout.splitlines():
-        if "current priority" in line.lower() or "priority" in line.lower():
+    for line in (result.stdout or "").splitlines():
+        if "current priority" in line.lower() or "rt_priority" in line.lower() or "priority" in line.lower():
             parts = line.split()
             for idx, part in enumerate(parts):
                 if part.isdigit() and idx > 0:
@@ -193,6 +214,8 @@ class RtprioWindow:
 
         self.status_var = tk.StringVar(value="Ready")
         self.process_vars = {}
+        self.saved_state = {}
+        self.last_save_path = None
 
         style = ttk.Style(root)
         style.configure('.', font=('TkDefaultFont', 9))
@@ -212,6 +235,9 @@ class RtprioWindow:
         self.save_button = ttk.Button(toolbar, text="Save", command=self.save_data)
         self.save_button.pack(side=tk.LEFT, padx=(8, 0))
 
+        self.load_button = ttk.Button(toolbar, text="Load", command=self.load_data)
+        self.load_button.pack(side=tk.LEFT, padx=(8, 0))
+
         self.processes_frame = ttk.Frame(self.main)
         self.processes_frame.pack(fill=tk.BOTH, expand=True)
 
@@ -219,6 +245,11 @@ class RtprioWindow:
         self.status_label.pack(anchor="w", pady=(8, 0))
 
         self.refresh_processes()
+
+    def _saved_state_for_label(self, label):
+        if not label:
+            return None
+        return self.saved_state.get(label.strip())
 
     def collect_process_entries(self):
         entries = []
@@ -229,11 +260,12 @@ class RtprioWindow:
                     cmdline = _command_line_for_pid(pid)
                     if not cmdline or not re.search(r"(?:^|\s)\d+\s*$", cmdline):
                         continue
+                    display_name = _yabridge_display_name_from_cmdline(cmdline) or f"yabridge:{pid}"
                     yabridge_entries.append({
                         "key": f"yabridge:{pid}",
                         "process_name": process_name,
                         "pid": pid,
-                        "display_name": _yabridge_display_name_from_cmdline(cmdline),
+                        "display_name": display_name,
                     })
                 yabridge_entries.sort(key=lambda item: item["display_name"].lower())
                 entries.extend(yabridge_entries)
@@ -263,10 +295,17 @@ class RtprioWindow:
             if pid_for_label is not None:
                 label_text = f"{label_text} ({pid_for_label})"
 
+            saved_state = self._saved_state_for_label(entry["display_name"])
+            if saved_state is not None:
+                current_value = int(saved_state.get("priority", MIN_PRIORITY))
+                policy_value = saved_state.get("policy", "-r")
+            else:
+                current_value = current_rtprio_for_pid(entry["pid"]) if entry["pid"] is not None else current_rtprio(entry["process_name"]) or MIN_PRIORITY
+                policy_value = current_policy_for_pid(entry["pid"]) if entry["pid"] is not None else "-r"
+
             label = ttk.Label(row, text=label_text, width=35, anchor="w")
             label.pack(side=tk.LEFT)
 
-            current_value = current_rtprio_for_pid(entry["pid"]) if entry["pid"] is not None else current_rtprio(entry["process_name"]) or MIN_PRIORITY
             value_var = tk.IntVar(value=current_value)
             self.process_vars[entry["key"]] = value_var
 
@@ -293,7 +332,7 @@ class RtprioWindow:
             value_label = ttk.Label(row, textvariable=value_var, width=4)
             value_label.pack(side=tk.RIGHT)
 
-            policy_var = tk.StringVar(value="-r")
+            policy_var = tk.StringVar(value=policy_value)
             policy_combo = ttk.Combobox(row, values=["-r", "-f"], textvariable=policy_var, width=4, state="readonly")
             policy_combo.pack(side=tk.RIGHT, padx=(0, 8))
 
@@ -314,6 +353,29 @@ class RtprioWindow:
             slider.configure(command=_apply_slider_value)
             policy_combo.bind("<<ComboboxSelected>>", _apply_selected_policy)
 
+    def _unique_saved_entries(self):
+        seen = set()
+        entries = []
+        for entry in self.collect_process_entries():
+            label = entry["display_name"].strip()
+            if not label or label in seen:
+                continue
+            seen.add(label)
+            entries.append(entry)
+        return entries
+
+    def _write_state_file(self, target):
+        lines = ["label,priority,policy"]
+        for entry in self._unique_saved_entries():
+            pid = entry["pid"]
+            label = entry["display_name"]
+            priority = current_rtprio_for_pid(pid) if pid is not None else current_rtprio(entry["process_name"]) or MIN_PRIORITY
+            policy = current_policy_for_pid(pid) if pid is not None else "-r"
+            lines.append(f"{label},{priority},{policy}")
+        with open(target, "w", encoding="utf-8", newline="") as fh:
+            writer = csv.writer(fh)
+            writer.writerows([line.split(",") for line in lines])
+
     def save_data(self):
         target = filedialog.asksaveasfilename(
             title="Save process data",
@@ -323,20 +385,69 @@ class RtprioWindow:
         if not target:
             return
 
-        lines = ["label,priority,policy"]
-        for entry in self.collect_process_entries():
-            pid = entry["pid"]
-            label = entry["display_name"]
-            priority = current_rtprio_for_pid(pid) if pid is not None else current_rtprio(entry["process_name"]) or MIN_PRIORITY
-            policy = "-r"
-            lines.append(f"{label},{priority},{policy}")
-
         try:
-            with open(target, "w", encoding="utf-8") as fh:
-                fh.write("\n".join(lines) + "\n")
+            self._write_state_file(target)
+            self.last_save_path = target
             self.status_var.set(f"Saved to {target}")
         except OSError as exc:
             self.status_var.set(f"Save failed: {exc}")
+
+    def load_data(self, path=None):
+        if path is None:
+            default_dir = os.path.dirname(self.last_save_path) if self.last_save_path else None
+            path = filedialog.askopenfilename(
+                title="Load saved process data",
+                initialdir=default_dir or os.getcwd(),
+                defaultextension=".csv",
+                filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
+            )
+        if not path:
+            return
+
+        self.last_save_path = path
+        self.saved_state = {}
+        try:
+            with open(path, "r", encoding="utf-8", newline="") as fh:
+                reader = csv.DictReader(fh)
+                for row in reader:
+                    label = (row.get("label") or "").strip()
+                    if not label:
+                        continue
+                    try:
+                        priority = int(row.get("priority", MIN_PRIORITY))
+                    except (TypeError, ValueError):
+                        priority = MIN_PRIORITY
+                    policy = row.get("policy") or "-r"
+                    if policy not in {"-r", "-f"}:
+                        policy = "-r"
+                    self.saved_state[label] = {"priority": priority, "policy": policy}
+        except (OSError, csv.Error):
+            self.saved_state = {}
+            self.status_var.set(f"Failed to load {path}")
+            return
+
+        self.refresh_processes()
+
+        applied = []
+        for entry in self.collect_process_entries():
+            saved_state = self._saved_state_for_label(entry["display_name"])
+            if saved_state is None:
+                continue
+            priority = int(saved_state.get("priority", MIN_PRIORITY))
+            policy = saved_state.get("policy", "-r")
+            if entry["pid"] is not None:
+                ok, message = set_rtprio_for_pid(entry["pid"], priority, policy)
+            else:
+                ok, message = set_rtprio(entry["process_name"], priority, policy)
+            if ok:
+                applied.append(f"{entry['display_name']}: {priority} ({policy})")
+            else:
+                applied.append(f"{entry['display_name']}: {message}")
+
+        if applied:
+            self.status_var.set("; ".join(applied[:3]) + ("..." if len(applied) > 3 else ""))
+        else:
+            self.status_var.set(f"Loaded from {path}")
 
     def apply_priority_for_pid(self, pid: int, process_name: str, display_name: str, value: int, policy: str = "-r"):
         ok, message = set_rtprio_for_pid(pid, value, policy)

@@ -97,5 +97,7 @@ Thumbs.db
 
 
 *.wav
+*.raw
+*.pcm
 *.spec
 *.reapeaks

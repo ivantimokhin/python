@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Join two raw PCM 32-bit float mono files into a stereo raw float32 file.
 
-The left channel is delayed by 1 sample relative to the right channel.
+Either the left or the right channel can be delayed relative to the other.
 
-Usage: join.py left.raw right.raw out.raw [--samplerate N]
+Usage: join.py left.raw right.raw out.raw [--delay-left N | --delay-right N]
 
 This script operates on raw interleaved float32 little-endian files (mono).
 It pads the shorter input with zeros so both channels align after applying the delay.
@@ -33,31 +33,68 @@ def write_f32_stereo_interleaved(path: Path, left, right):
 
 
 def main(argv):
-    if len(argv) < 4:
+    args = list(argv[1:])
+    if len(args) < 3:
         print(__doc__)
         raise SystemExit(1)
 
-    left_in = Path(argv[1])
-    right_in = Path(argv[2])
-    out = Path(argv[3])    
+    left_delay = 0
+    right_delay = 0
+    left_delay_index = next((i for i, arg in enumerate(args) if arg == '--delay-left'), None)
+    right_delay_index = next((i for i, arg in enumerate(args) if arg == '--delay-right'), None)
+
+    if left_delay_index is not None and right_delay_index is not None:
+        raise SystemExit("Left and right channel delays are mutually exclusive")
+
+    if left_delay_index is not None:
+        if left_delay_index + 1 >= len(args):
+            raise SystemExit("Missing value for delay")
+        try:
+            left_delay = int(args[left_delay_index + 1])
+        except ValueError as exc:
+            raise SystemExit(f"Invalid delay value: {args[left_delay_index + 1]}") from exc
+        if left_delay < 0:
+            raise SystemExit("Delay must be >= 0")
+        args.pop(left_delay_index + 1)
+        args.pop(left_delay_index)
+
+    if right_delay_index is not None:
+        if right_delay_index + 1 >= len(args):
+            raise SystemExit("Missing value for --delay-right")
+        try:
+            right_delay = int(args[right_delay_index + 1])
+        except ValueError as exc:
+            raise SystemExit(f"Invalid delay value: {args[right_delay_index + 1]}") from exc
+        if right_delay < 0:
+            raise SystemExit("Delay must be >= 0")
+        args.pop(right_delay_index + 1)
+        args.pop(right_delay_index)
+
+    if len(args) < 3:
+        print(__doc__)
+        raise SystemExit(1)
+
+    left_in = Path(args[0])
+    right_in = Path(args[1])
+    out = Path(args[2])
 
     left = read_f32_mono(left_in)
     right = read_f32_mono(right_in)
 
-    # Delay left by 1 sample: prepend a zero at start and drop last sample
-    # To keep overall length, we'll prepend a zero to left. That makes left length+1.
-    # To produce equal-length channels, pad the shorter channel with zeros to match.
-    left_delayed = [0.0] + left
+    left_delayed = [0.0] * left_delay + left
+    right_delayed = [0.0] * right_delay + right
 
-    # Ensure both channels same length
-    maxlen = max(len(left_delayed), len(right))
+    maxlen = max(len(left_delayed), len(right_delayed))
     if len(left_delayed) < maxlen:
         left_delayed += [0.0] * (maxlen - len(left_delayed))
-    if len(right) < maxlen:
-        right += [0.0] * (maxlen - len(right))
+    if len(right_delayed) < maxlen:
+        right_delayed += [0.0] * (maxlen - len(right_delayed))
 
-    write_f32_stereo_interleaved(out, left_delayed, right)
-    print(f"Wrote stereo (float32) to {out} — frames: {maxlen}")
+    write_f32_stereo_interleaved(out, left_delayed, right_delayed)
+    print(
+        f"Wrote stereo (float32) to {out} — frames: {maxlen} — "
+        f"left delay: {left_delay} samples — right delay: {right_delay} samples"
+    )
 
 
 if __name__ == '__main__':
