@@ -78,4 +78,4 @@ def emulate_intensity_stereo(input_path, output_path, crossover_freq=2000):
     print(f"Successfully generated Intensity Stereo emulated file: {output_path}")
 
 # Example usage:
-emulate_intensity_stereo("output_fixed.wav", "untitled_002_is.wav", crossover_freq=2590)
+emulate_intensity_stereo("record_1.L_right_13_stereo.wav", "untitled_002_is_5000.wav", crossover_freq=3863)
