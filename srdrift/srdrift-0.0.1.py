@@ -119,14 +119,7 @@ def process_drift_with_options(audio_wav_path, drift_wav_path, output_wav_path, 
     sf.write(output_wav_path, processed_audio, sample_rate, subtype='FLOAT')
     print(f"=== Успех! Файл сохранен: {output_wav_path} ===\n")
 
-# --- ИНСТРУКЦИЯ И НАСТРОЙКА ЗАПУСКА ---
-if __name__ == "__main__":
-    # Укажите пути к вашим файлам из REAPER
-    AUDIO_FILE = "record_1.L_left_0_stereo.wav" 
-    DRIFT_FILE = "01-Guitar-261030_1500-jsfx-01.wav"   
-    OUTPUT_FILE = "python_master_result_2.wav"
-    
-    # ДОСТУПНЫЕ РЕЖИМЫ (МЕТОДЫ) ДЛЯ ВЫБОРА:
+# ДОСТУПНЫЕ РЕЖИМЫ (МЕТОДЫ) ДЛЯ ВЫБОРА:
     # 'cubic'   - Стандартный кубический сплайн
     # 'sinc_16'  - Быстрый sinc фильтр (16 точек)
     # 'sinc_64'  - Среднее качество (64 точки)
@@ -134,13 +127,20 @@ if __name__ == "__main__":
     # 'sinc_384' - Сверхвысокое качество (384 точки)
     # 'sinc_512' - Студийный медленный sinc (512 точек)
     # 'sinc_768' - Максимальное качество, очень медленный (768 точек)
-    
-    SELECTED_MODE = 'sinc_512' # Выберите нужный режим здесь
-    
+
+if __name__ == "__main__":
+    audio_file = "01-Guitar-261101_0106-jsfx.wav"
+    drift_file = "01-Guitar-261101_0107-jsfx.wav"
+    selected_mode = 'sinc_512'
+    smoothing_window = 1536
+
+    base_name = audio_file.rsplit(".", 1)[0]
+    output_file = f"{base_name}_{selected_mode}_{smoothing_window}.wav"
+
     process_drift_with_options(
-        audio_wav_path=AUDIO_FILE,
-        drift_wav_path=DRIFT_FILE,
-        output_wav_path=OUTPUT_FILE,
-        mode=SELECTED_MODE,
-        smoothing_window=512 # Окно фильтрации джиттера ОС
+        audio_wav_path=audio_file,
+        drift_wav_path=drift_file,
+        output_wav_path=output_file,
+        mode=selected_mode,
+        smoothing_window=smoothing_window
     )

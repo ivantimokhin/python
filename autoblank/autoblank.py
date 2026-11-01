@@ -189,12 +189,12 @@ def auto_trim_wav(
 
 if __name__ == "__main__":
     auto_trim_wav(
-        input_path="python_master_result.wav",
+        input_path="01-Guitar-261101_0106-jsfx_sinc_512_1536.wav",
         output_path="output_trim_1323_noise4.wav",
-        threshold_dbfs=-50.0,
+        threshold_dbfs=-40.0,
         threshold_level=None,
         leading_silence_samples=44100,
         trailing_silence_samples=120,
-        padding_dbfs=-60.0,
-        pad_frequency_hz=166.41,
+        padding_dbfs=-40.0,
+        pad_frequency_hz=82.41,
     )
